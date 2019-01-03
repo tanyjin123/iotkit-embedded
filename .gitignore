@@ -1,8 +1,6 @@
-*.so
 *.exe
 .settings/
 *.cproject
-*.project
 *.o
 *.d
 *.lo

@@ -11,16 +11,23 @@
 #include "iot_export.h"
 #include "app_entry.h"
 
+static char *g_pk = NULL;
+static char *g_dn = NULL;
+static char *g_ds = NULL;
+
+static char g_topic_update[512] = {0}; 
+static char g_topic_data[512] = {0}; 
+static char g_topic_error[512] = {0}; 
+
 #define PRODUCT_KEY             "a1MZxOdcBnO"
 #define PRODUCT_SECRET          "h4I4dneEFp7EImTv"
 #define DEVICE_NAME             "test_01"
 #define DEVICE_SECRET           "t9GmMf2jb3LgWfXBaZD2r3aJrfVWBv56"
 
 /* These are pre-defined topics */
-#define TOPIC_UPDATE            "/"PRODUCT_KEY"/"DEVICE_NAME"/update"
-#define TOPIC_ERROR             "/"PRODUCT_KEY"/"DEVICE_NAME"/update/error"
-#define TOPIC_GET               "/"PRODUCT_KEY"/"DEVICE_NAME"/get"
-#define TOPIC_DATA               "/"PRODUCT_KEY"/"DEVICE_NAME"/data"
+#define FMT_TOPIC_UPDATE            "/%s/%s/update"
+#define FMT_TOPIC_DATA               "/%s/%s/data"
+#define FMT_TOPIC_ERROR             "/%s/%s/update/error"
 
 #define MQTT_MSGLEN             (1024)
 
@@ -141,7 +148,7 @@ int mqtt_client(void)
     char msg_pub[128];
 
     /* Device AUTH */
-    if (0 != IOT_SetupConnInfo(PRODUCT_KEY, DEVICE_NAME, DEVICE_SECRET, (void **)&pconn_info)) {
+    if (0 != IOT_SetupConnInfo(g_pk, g_dn, g_ds, (void **)&pconn_info)) {
         EXAMPLE_TRACE("AUTH request failed!");
         return -1;
     }
@@ -183,17 +190,17 @@ int mqtt_client(void)
     topic_msg.payload = (void *)msg_pub;
     topic_msg.payload_len = strlen(msg_pub);
 
-    rc = IOT_MQTT_Publish(pclient, TOPIC_UPDATE, &topic_msg);
+    rc = IOT_MQTT_Publish(pclient, g_topic_update, &topic_msg);
     if (rc < 0) {
         IOT_MQTT_Destroy(&pclient);
         EXAMPLE_TRACE("error occur when publish");
         return -1;
     }
 
-    EXAMPLE_TRACE("\n publish message: \n topic: %s\n payload: \%s\n rc = %d", TOPIC_UPDATE, topic_msg.payload, rc);
+    EXAMPLE_TRACE("\n publish message: \n topic: %s\n payload: \%s\n rc = %d", g_topic_update, topic_msg.payload, rc);
 
     /* Subscribe the specific topic */
-    rc = IOT_MQTT_Subscribe(pclient, TOPIC_DATA, IOTX_MQTT_QOS1, _demo_message_arrive, NULL);
+    rc = IOT_MQTT_Subscribe(pclient, g_topic_error, IOTX_MQTT_QOS1, _demo_message_arrive, NULL);
     if (rc < 0) {
         IOT_MQTT_Destroy(&pclient);
         EXAMPLE_TRACE("IOT_MQTT_Subscribe() failed, rc = %d", rc);
@@ -214,12 +221,12 @@ int mqtt_client(void)
     topic_msg.payload = (void *)msg_pub;
     topic_msg.payload_len = strlen(msg_pub);
 
-    rc = IOT_MQTT_Publish(pclient, TOPIC_DATA, &topic_msg);
-    EXAMPLE_TRACE("\n publish message: \n topic: %s\n payload: \%s\n rc = %d", TOPIC_DATA, topic_msg.payload, rc);
+    rc = IOT_MQTT_Publish(pclient, g_topic_error, &topic_msg);
+    EXAMPLE_TRACE("\n publish message: \n topic: %s\n payload: \%s\n rc = %d", g_topic_error, topic_msg.payload, rc);
 
     IOT_MQTT_Yield(pclient, 200);
 
-    do {
+    while(1) {
         /* Generate topic message */
         cnt++;
         msg_len = snprintf(msg_pub, sizeof(msg_pub), "{\"attr_name\":\"temperature\",\"attr_value\":\"%d\"}", cnt);
@@ -231,7 +238,7 @@ int mqtt_client(void)
         topic_msg.payload = (void *)msg_pub;
         topic_msg.payload_len = msg_len;
 
-        rc = IOT_MQTT_Publish(pclient, TOPIC_DATA, &topic_msg);
+        rc = IOT_MQTT_Publish(pclient, g_topic_error, &topic_msg);
         if (rc < 0) {
             EXAMPLE_TRACE("error occur when publish");
         }
@@ -245,12 +252,12 @@ int mqtt_client(void)
             HAL_SleepMs(2000);
             cnt = 0;
         }
-
-    } while (cnt < 1);
+        HAL_SleepMs(2000);
+    }
 
     IOT_MQTT_Yield(pclient, 200);
 
-    IOT_MQTT_Unsubscribe(pclient, TOPIC_DATA);
+    IOT_MQTT_Unsubscribe(pclient, g_topic_error);
 
     IOT_MQTT_Yield(pclient, 200);
 
@@ -261,7 +268,7 @@ int mqtt_client(void)
 
 int linkkit_main(void *paras)
 {
-    IOT_SetLogLevel(IOT_LOG_DEBUG);
+    IOT_SetLogLevel(IOT_LOG_CRIT);
 
     user_argc = 0;
     user_argv = NULL;
@@ -270,12 +277,27 @@ int linkkit_main(void *paras)
         app_main_paras_t *p = (app_main_paras_t *)paras;
         user_argc = p->argc;
         user_argv = p->argv;
+
+        if(user_argc != 4){
+            EXAMPLE_TRACE("usage: ./example PK DN DS\n");
+            return 0;
+        }
     }
 
-    HAL_SetProductKey(PRODUCT_KEY);
-    HAL_SetDeviceName(DEVICE_NAME);
-    HAL_SetDeviceSecret(DEVICE_SECRET);
-    HAL_SetProductSecret(PRODUCT_SECRET);
+    g_pk = user_argv[1];
+    g_dn = user_argv[2];
+    g_ds = user_argv[3];
+
+    HAL_SetProductKey(g_pk);
+    HAL_SetDeviceName(g_dn);
+    HAL_SetDeviceSecret(g_ds);
+
+    EXAMPLE_TRACE("pk:  %s, dn:  %s, ds:  %s\n", user_argv[1], user_argv[2], user_argv[3]);
+    snprintf(g_topic_update, sizeof(g_topic_update), FMT_TOPIC_UPDATE, g_pk, g_dn);
+    snprintf(g_topic_data, sizeof(g_topic_data), FMT_TOPIC_DATA, g_pk, g_dn);
+    snprintf(g_topic_error, sizeof(g_topic_error), FMT_TOPIC_ERROR, g_pk, g_dn);
+
+    //HAL_SetProductSecret(PRODUCT_SECRET);
     /* Choose Login Server */
     int domain_type = IOTX_CLOUD_REGION_SHANGHAI;
     IOT_Ioctl(IOTX_IOCTL_SET_DOMAIN, (void *)&domain_type);

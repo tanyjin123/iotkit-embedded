@@ -8,10 +8,10 @@ LDFLAGS             := -Bstatic
 LDFLAGS             += -liot_sdk
 
 LDFLAGS             += -liot_hal
-CFLAGS              := $(filter-out -ansi,$(CFLAGS))
+CFLAGS              += $(filter-out -ansi,$(CFLAGS))
 ifneq (,$(filter -D_PLATFORM_IS_WINDOWS_,$(CFLAGS)))
 LDFLAGS             += -lws2_32
-CFLAGS              := $(filter-out -DCOAP_COMM_ENABLED,$(CFLAGS))
+CFLAGS              += $(filter-out -DCOAP_COMM_ENABLED,$(CFLAGS))
 endif
 ifneq (,$(filter -DSUPPORT_ITLS,$(CFLAGS)))
 LDFLAGS             += -litls

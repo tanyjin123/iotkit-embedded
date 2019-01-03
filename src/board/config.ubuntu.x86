@@ -26,6 +26,7 @@ CONFIG_ENV_CFLAGS   += -Werror
 else
 CONFIG_src/ref-impl/hal :=
 CONFIG_examples     :=
+CONFIG_iot_remote_access :=
 CONFIG_src/tools/linkkit_tsl_convert :=
 endif
 

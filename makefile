@@ -4,6 +4,17 @@ include src/tools/default_settings.mk
 include src/tools/parse_make_settings.mk
 include $(RULE_DIR)/funcs.mk
 
+CFLAGS+="-Wno-unused-result"
+CFLAGS+="-Wno-maybe-uninitialized"
+
+LDFLAGS+="-L./prebuilt/ubuntu/lib"
+LDFLAGS+="-lnopoll"
+LDFLAGS+="-lssl"
+LDFLAGS+="-lcrypto"
+LDFLAGS+="-lpthread"
+
+SUBDIRS += src/iot_remote_access
+
 # CFLAGS  += -DINSPECT_MQTT_FLOW
 # CFLAGS  += -DINSPECT_MQTT_LIST
 
