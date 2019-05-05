@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include "iot_import.h"
 #include "iot_export.h"
@@ -26,8 +30,8 @@ static char g_topic_error[512] = {0};
 
 /* These are pre-defined topics */
 #define FMT_TOPIC_UPDATE            "/%s/%s/update"
-#define FMT_TOPIC_DATA               "/%s/%s/data"
 #define FMT_TOPIC_ERROR             "/%s/%s/update/error"
+#define FMT_TOPIC_SWITCH            "/sys/%s/%s/edge/debug/switch"
 
 #define MQTT_MSGLEN             (1024)
 
@@ -113,6 +117,106 @@ void event_handle(void *pcontext, void *pclient, iotx_mqtt_event_msg_pt msg)
     }
 }
 
+static char *_get_current_work_dir()
+{
+	char *buff = NULL;
+    char *tmp = NULL;
+
+	buff = malloc(FILENAME_MAX + 1);
+	if(buff == NULL){
+        printf("faild to alloc memory to save abs path ");
+        return NULL;
+    }
+	memset(buff, 0, FILENAME_MAX + 1);
+#ifdef __APPLE__
+  uint32_t size = FILENAME_MAX;
+  if (_NSGetExecutablePath(buff, &size) != 0) {
+    // Buffer size is too small.
+    printf("faild to get current directory");
+    return NULL;
+  }
+  printf("current directory: %s\n", buff);
+
+  tmp = strrchr(buff, '/');
+  if(tmp){
+      if(buff[tmp - buff - 1] == '.')
+          buff[tmp - buff - 1] = '\0';
+      else
+          buff[tmp - buff] = '\0';
+  }
+#else
+    int read_len = 0;
+    read_len = readlink("/proc/self/exe", buff, FILENAME_MAX - 1);
+    if(read_len <= 0){
+        printf("faild to read /proc ");
+        return NULL;
+    }
+    buff[read_len] = '\0';
+
+    tmp = strrchr(buff, '/');
+    if(tmp){
+        buff[tmp - buff] = '\0';
+    }
+#endif
+	return buff;
+}
+
+#define NAME_REMOTE_ACCESS_DAEMON "RemoteTerminalDaemon"
+#define FMT_START_ACCESS_DAEMON   "%s %s %s %s > /dev/null &"
+static int open_remote_access_daemon(const char *pk, const char *dn, const char *ds)
+{
+    struct stat st;
+    int ret = 0;
+    char *buf = NULL;
+    char *path = _get_current_work_dir();
+
+    strcat(path, "/");
+    strcat(path, NAME_REMOTE_ACCESS_DAEMON);
+
+    ret = stat(path, &st);
+
+    if (ret == -1) {
+        printf("failed to stat %s\n", path);
+        free(path);
+        return -1;
+    }
+
+    if (!S_ISREG(st.st_mode)) {
+        printf("%s is not a file\n", path);
+        free(path);
+        return -2;
+    }
+
+    buf = calloc(1, strlen(path) + strlen(pk) + strlen(dn) + strlen(ds) + strlen(FMT_START_ACCESS_DAEMON));
+    if(buf == NULL){
+        printf("memory is not enough\n");
+        free(path);
+        return -3;
+    }
+
+    sprintf(buf, FMT_START_ACCESS_DAEMON, path, pk, dn, ds);
+
+    ret = system(buf);
+
+    free(path);
+    free(buf);
+    return ret;
+}
+
+int close_remote_access_daemon()
+{
+    int ret = 0;
+    char buf[256] = {0};
+
+    snprintf(buf, sizeof(buf), "ps -eo user,pid,ppid,stat,args | grep \"RemoteTerminalDaemon\" | grep -v \"grep\" | awk '{print $2}' | xargs kill -15");
+
+    ret = system(buf);
+
+    return ret;
+}
+#define MSG_START_REMOTE_SERVICE "{\"status\":1}"
+#define MSG_STOP_REMOTE_SERVICE  "{\"status\":0}"
+
 static void _demo_message_arrive(void *pcontext, void *pclient, iotx_mqtt_event_msg_pt msg)
 {
     iotx_mqtt_topic_info_pt     ptopic_info = (iotx_mqtt_topic_info_pt) msg->msg;
@@ -131,6 +235,15 @@ static void _demo_message_arrive(void *pcontext, void *pclient, iotx_mqtt_event_
                           ptopic_info->payload,
                           ptopic_info->payload_len);
             EXAMPLE_TRACE("----");
+			if(strncmp(ptopic_info->payload, MSG_START_REMOTE_SERVICE, ptopic_info->payload_len) == 0) {
+				EXAMPLE_TRACE("starting remote access daemon...\n");
+				open_remote_access_daemon(g_pk, g_dn, g_ds);
+			} else if(strncmp(ptopic_info->payload, MSG_STOP_REMOTE_SERVICE, ptopic_info->payload_len) == 0) {
+				EXAMPLE_TRACE("stopping remote access daemon...\n");
+				close_remote_access_daemon();
+			} else {
+				EXAMPLE_TRACE("topic ignored...\n");
+			} 
             break;
         default:
             EXAMPLE_TRACE("Should NOT arrive here.");
@@ -200,7 +313,7 @@ int mqtt_client(void)
     EXAMPLE_TRACE("\n publish message: \n topic: %s\n payload: \%s\n rc = %d", g_topic_update, topic_msg.payload, rc);
 
     /* Subscribe the specific topic */
-    rc = IOT_MQTT_Subscribe(pclient, g_topic_error, IOTX_MQTT_QOS1, _demo_message_arrive, NULL);
+    rc = IOT_MQTT_Subscribe(pclient, g_topic_data, IOTX_MQTT_QOS1, _demo_message_arrive, NULL);
     if (rc < 0) {
         IOT_MQTT_Destroy(&pclient);
         EXAMPLE_TRACE("IOT_MQTT_Subscribe() failed, rc = %d", rc);
@@ -252,7 +365,7 @@ int mqtt_client(void)
             HAL_SleepMs(2000);
             cnt = 0;
         }
-        HAL_SleepMs(2000);
+        HAL_SleepMs(60*1000);
     }
 
     IOT_MQTT_Yield(pclient, 200);
@@ -294,7 +407,7 @@ int linkkit_main(void *paras)
 
     EXAMPLE_TRACE("pk:  %s, dn:  %s, ds:  %s\n", user_argv[1], user_argv[2], user_argv[3]);
     snprintf(g_topic_update, sizeof(g_topic_update), FMT_TOPIC_UPDATE, g_pk, g_dn);
-    snprintf(g_topic_data, sizeof(g_topic_data), FMT_TOPIC_DATA, g_pk, g_dn);
+    snprintf(g_topic_data, sizeof(g_topic_data), FMT_TOPIC_SWITCH, g_pk, g_dn);
     snprintf(g_topic_error, sizeof(g_topic_error), FMT_TOPIC_ERROR, g_pk, g_dn);
 
     //HAL_SetProductSecret(PRODUCT_SECRET);
